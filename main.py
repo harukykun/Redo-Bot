@@ -11,37 +11,56 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 MONGO_URI = os.getenv('MONGODB_URI')
 
 # 2. Kết nối MongoDB
-# Lưu ý: Trên Railway, Mongo URI thường có dạng mongodb://...
 mongo_client = MongoClient(MONGO_URI)
-db = mongo_client['discord_bot_db'] # Tên database
-logs_collection = db['message_logs'] # Tên collection (bảng)
+db = mongo_client['discord_bot_db'] 
+logs_collection = db['message_logs'] 
 
 # 3. Cấu hình Bot Discord
 intents = discord.Intents.default()
-intents.message_content = True  # Quan trọng: Để đọc được nội dung tin nhắn
-intents.members = True          # Để lấy thông tin thành viên (tag)
+intents.message_content = True  
+intents.members = True          
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Hàm phụ trợ: Lấy danh sách URL từ attachments
+def get_attachments_data(message):
+    attachment_urls = []
+    if message.attachments:
+        for attachment in message.attachments:
+            attachment_urls.append({
+                'url': attachment.url,
+                'filename': attachment.filename,
+                'content_type': attachment.content_type # image/png, audio/mpeg, etc.
+            })
+    return attachment_urls
 
 # --- Sự kiện: Bot đã sẵn sàng ---
 @bot.event
 async def on_ready():
     print(f'✅ Bot đã đăng nhập với tên: {bot.user.name}')
-    print('🚀 Đang theo dõi tin nhắn...')
+    print('🚀 Đang theo dõi tin nhắn (Text, Ảnh, Audio)...')
 
 # --- Sự kiện: Tin nhắn bị XÓA ---
 @bot.event
 async def on_message_delete(message):
-    # Bỏ qua tin nhắn của bot hoặc tin nhắn rỗng (chỉ có ảnh/embed)
-    if message.author.bot or not message.content:
+    if message.author.bot:
+        return
+
+    # Lấy thông tin file đính kèm (nếu có)
+    attachments = get_attachments_data(message)
+
+    # Nếu không có nội dung text VÀ không có file đính kèm thì bỏ qua
+    if not message.content and not attachments:
         return
 
     log_entry = {
         'message_id': message.id,
         'author_id': message.author.id,
         'author_name': message.author.name,
+        'author_avatar': message.author.display_avatar.url, # Lưu thêm avatar để hiển thị cho đẹp
         'content_before': message.content,
-        'content_after': None, # Xóa thì không có content sau
+        'content_after': None,
+        'attachments': attachments, # Lưu danh sách file
         'type': 'DELETE',
         'channel_id': message.channel.id,
         'created_at': datetime.now(timezone.utc)
@@ -56,16 +75,24 @@ async def on_message_delete(message):
 # --- Sự kiện: Tin nhắn bị CHỈNH SỬA ---
 @bot.event
 async def on_message_edit(before, after):
-    # Bỏ qua nếu nội dung không đổi (ví dụ Discord chỉ load link preview), bot, hoặc rỗng
-    if before.content == after.content or before.author.bot or not before.content:
+    if before.author.bot:
         return
+    
+    # Kiểm tra xem nội dung HOẶC file đính kèm có thay đổi không
+    # (Thường edit chỉ đổi text, nhưng cứ lưu lại attachments của bản gốc cho chắc)
+    if before.content == after.content:
+        return
+
+    attachments = get_attachments_data(before)
 
     log_entry = {
         'message_id': before.id,
         'author_id': before.author.id,
         'author_name': before.author.name,
+        'author_avatar': before.author.display_avatar.url,
         'content_before': before.content,
         'content_after': after.content,
+        'attachments': attachments,
         'type': 'EDIT',
         'channel_id': before.channel.id,
         'created_at': datetime.now(timezone.utc)
@@ -73,14 +100,12 @@ async def on_message_edit(before, after):
 
     try:
         logs_collection.insert_one(log_entry)
-        # print(f"Đã lưu tin nhắn chỉnh sửa của {before.author.name}")
     except Exception as e:
         print(f"Lỗi lưu DB (Edit): {e}")
 
 # --- Lệnh: !chaydidau ---
 @bot.command(name='chaydidau')
 async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
-    # Kiểm tra cú pháp
     if member is None:
         await ctx.reply("Sai cú pháp! Vui lòng dùng: `!chaydidau <@tag> <số thứ tự>`")
         return
@@ -89,14 +114,11 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
         index = 1
 
     try:
-        # Truy vấn MongoDB: Tìm theo ID người dùng, Sắp xếp mới nhất -> cũ nhất
-        # Skip: Bỏ qua (index - 1) tin nhắn đầu để lấy tin thứ index
         cursor = logs_collection.find({'author_id': member.id})\
                                 .sort('created_at', -1)\
                                 .skip(index - 1)\
                                 .limit(1)
         
-        # Chuyển con trỏ thành list để lấy dữ liệu
         result = list(cursor)
 
         if not result:
@@ -105,27 +127,51 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
 
         data = result[0]
         
-        # Tạo Embed hiển thị đẹp mắt
+        # Setup màu sắc và tiêu đề
         embed_color = discord.Color.red() if data['type'] == 'DELETE' else discord.Color.orange()
-        title_type = "ĐÃ XÓA" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA"
+        title_type = "ĐÃ XÓA 🗑️" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA ✏️"
         
         embed = discord.Embed(
-            title=f"Tin nhắn {title_type} của {data['author_name']}",
+            description=f"**Tác giả:** {member.mention}",
             color=embed_color,
             timestamp=data['created_at']
         )
-        
-        # Hiển thị nội dung
+        embed.set_author(name=f"{data['author_name']} - {title_type}", icon_url=data.get('author_avatar', ''))
+
+        # Hiển thị nội dung Text
         if data['type'] == 'EDIT':
-            embed.add_field(name="Trước khi sửa:", value=data['content_before'], inline=False)
-            embed.add_field(name="Sau khi sửa:", value=data['content_after'], inline=False)
+            embed.add_field(name="Trước khi sửa:", value=data['content_before'] or "_[Không có nội dung text]_", inline=False)
+            embed.add_field(name="Sau khi sửa:", value=data['content_after'] or "_[Không có nội dung text]_", inline=False)
         else:
-            embed.add_field(name="Nội dung:", value=data['content_before'], inline=False)
+            embed.add_field(name="Nội dung:", value=data['content_before'] or "_[Chỉ có file đính kèm]_", inline=False)
+
+        # --- Xử lý File đính kèm (Ảnh / Âm thanh) ---
+        attachments = data.get('attachments', [])
+        image_set = False # Cờ kiểm tra xem đã set ảnh nền cho embed chưa
+
+        if attachments:
+            file_links = []
+            for att in attachments:
+                url = att['url']
+                filename = att['filename']
+                ctype = att.get('content_type', '')
+
+                # Tạo link markdown
+                link_text = f"[{filename}]({url})"
+                file_links.append(link_text)
+
+                # Nếu là ảnh và chưa set ảnh nền -> Set ảnh đầu tiên làm hình to
+                if not image_set and ctype and 'image' in ctype:
+                    embed.set_image(url=url)
+                    image_set = True
             
-        # Thêm thông tin kênh
+            # Liệt kê tất cả các link file vào một field
+            embed.add_field(name="📁 Tệp đính kèm:", value="\n".join(file_links), inline=False)
+
+        # Thông tin footer
         channel = bot.get_channel(data['channel_id'])
         channel_name = channel.name if channel else "Kênh lạ"
-        embed.set_footer(text=f"Tại kênh #{channel_name} • Vị trí: #{index} gần nhất")
+        embed.set_footer(text=f"Tại kênh #{channel_name} • Vị trí: #{index}")
 
         await ctx.send(embed=embed)
 
@@ -133,9 +179,7 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
         print(f"Lỗi lệnh chaydidau: {e}")
         await ctx.reply("⚠️ Có lỗi xảy ra khi truy xuất dữ liệu.")
 
-# Chạy bot
 if TOKEN:
     bot.run(TOKEN)
 else:
-
     print("Chưa tìm thấy TOKEN trong file .env")
