@@ -129,7 +129,7 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
         
         # Setup màu sắc và tiêu đề
         embed_color = discord.Color.red() if data['type'] == 'DELETE' else discord.Color.orange()
-        title_type = "ĐÃ XÓA 🗑️" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA ✏️"
+        title_type = "ĐÃ XÓA" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA"
         
         embed = discord.Embed(
             description=f"**Tác giả:** {member.mention}",
@@ -166,7 +166,7 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
                     image_set = True
             
             # Liệt kê tất cả các link file vào một field
-            embed.add_field(name="📁 Tệp đính kèm:", value="\n".join(file_links), inline=False)
+            embed.add_field(name="Tệp đính kèm:", value="\n".join(file_links), inline=False)
 
         # Thông tin footer
         channel = bot.get_channel(data['channel_id'])
@@ -183,3 +183,4 @@ if TOKEN:
     bot.run(TOKEN)
 else:
     print("Chưa tìm thấy TOKEN trong file .env")
+
