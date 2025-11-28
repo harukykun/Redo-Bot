@@ -100,14 +100,14 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
         result = list(cursor)
 
         if not result:
-            await ctx.reply(f"🕵️ Không tìm thấy tin nhắn đã xóa/sửa thứ #{index} nào của **{member.display_name}**.")
+            await ctx.reply(f"Không tìm thấy tin nhắn đã xóa/sửa thứ #{index} nào của **{member.display_name}**.")
             return
 
         data = result[0]
         
         # Tạo Embed hiển thị đẹp mắt
         embed_color = discord.Color.red() if data['type'] == 'DELETE' else discord.Color.orange()
-        title_type = "ĐÃ XÓA 🗑️" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA ✏️"
+        title_type = "ĐÃ XÓA" if data['type'] == 'DELETE' else "ĐÃ CHỈNH SỬA"
         
         embed = discord.Embed(
             title=f"Tin nhắn {title_type} của {data['author_name']}",
@@ -137,4 +137,5 @@ async def chaydidau(ctx, member: discord.Member = None, index: int = 1):
 if TOKEN:
     bot.run(TOKEN)
 else:
+
     print("Chưa tìm thấy TOKEN trong file .env")
